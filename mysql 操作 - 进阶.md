@@ -47,3 +47,31 @@ mysql> select ...;
 -- 查看跟踪结果
 mysql> select trace from information_schema.OPTIMIZER_TRACE\G;
 ```
+
+### 强制开启index（优化器误判问题）- 表：test.large_item
+
+1. 经过优化器选择后未使用索引，预期搜索行数为`187222`
+
+```sql
+MariaDB [test]> explain select id, score, name from large_item where score >= 15510 and name like '%name';
++------+-------------+------------+------+---------------+------+---------+------+--------+-------------+
+| id   | select_type | table      | type | possible_keys | key  | key_len | ref  | rows   | Extra       |
++------+-------------+------------+------+---------------+------+---------+------+--------+-------------+
+|    1 | SIMPLE      | large_item | ALL  | score_name    | NULL | NULL    | NULL | 187222 | Using where |
++------+-------------+------------+------+---------------+------+---------+------+--------+-------------+
+```
+
+2. 强制使用索引`force index(score_name)`，预期索引数为`93611`
+```sql
+MariaDB [test]> explain select id, score, name from large_item force index(score_name) where score >= 10 and name like '%name';
++------+-------------+------------+-------+---------------+------------+---------+------+-------+------------------------------------+
+| id   | select_type | table      | type  | possible_keys | key        | key_len | ref  | rows  | Extra
+             |
++------+-------------+------------+-------+---------------+------------+---------+------+-------+------------------------------------+
+|    1 | SIMPLE      | large_item | range | score_name    | score_name | 4       | NULL | 93611 | Using index condition; Using where |
++------+-------------+------------+-------+---------------+------------+---------+------+-------+------------------------------------+
+```
+
+**特殊情况**: 并非使用index搜索就比全表快，比如 `select name from test.large_item where score >= 10;` 比使用 `force index(score_name)` 快（0.33s，1.09s）
+
+- 原因：索引`score_name`中，为控制索引key长度`name`使用了前缀索引，`force index`后还需要回表查询完整数据
